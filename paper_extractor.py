@@ -40,7 +40,7 @@ def remove_unnecessary_elements(text: str) -> str:
         str: 정제된 텍스트
     """
     # 1. 허용할 문자 패턴 정의
-    allowed_pattern = r'[^a-zA-Z0-9&(),.\'";\s:-]'
+    allowed_pattern = r'[^a-zA-Z0-9&(),.\'";\s:/-]'
     
     # 2. 허용되지 않는 모든 문자 제거
     cleaned_text = re.sub(allowed_pattern, '', text)
@@ -62,8 +62,8 @@ def remove_unnecessary_elements(text: str) -> str:
         # 2. 수식 변수 제거
         (r'\b[a-zA-Z](?:[\s,.]+[a-zA-Z])+\b', ''), # 연속된 변수 제거
         
-        # 3. 숫자와 특수문자 처리
-        (r'\b\d+(?:\s*[,.-]\s*\d+)*\b', ''),       # 숫자 패턴 제거
+        # 3. 특수문자 처리
+        # (r'\b\d+(?:\s*[,.-]\s*\d+)*\b', ''),       # 숫자 패턴 제거
         (r'([a-z])-\s+([a-z])', r'\1\2'),          # 하이픈으로 연결된 문자 처리
         (r'-(?:\s*-)+', '-'),                       # 연속된 하이픈 처리
         (r'(\w)\s+\1(?:\s+\1){2,}', ''),           # 반복되는 문자 제거
@@ -173,21 +173,19 @@ def check_document_validity(text: str) -> tuple[bool, str]:
     quotes_count = text.count('"')
     consecutive_quotes = len(re.findall(r'"{2,}', text))
     
-    # 한글/영문 문자 수
-    korean_chars = len(re.findall(r'[가-힣]', text))
+    # 영문 문자 수
     english_chars = len(re.findall(r'[a-zA-Z]', text))
-    meaningful_chars = korean_chars + english_chars
     
     # 비율 계산
     special_char_ratio = special_chars / total_chars
-    meaningful_char_ratio = meaningful_chars / total_chars
+    meaningful_char_ratio = english_chars / total_chars
     
     # 유효성 검사 조건
     conditions = [
         # 1. 특수문자 비율이 30% 이하여야 함
         special_char_ratio <= 0.3,
         
-        # 2. 의미있는 문자(한글/영문) 비율이 20% 이상이어야 함
+        # 2. 의미있는 문자(영문) 비율이 20% 이상이어야 함
         meaningful_char_ratio >= 0.2,
         
         # 3. 연속된 따옴표의 수가 전체 문자 수의 1% 이하여야 함
@@ -249,18 +247,18 @@ def process_pdf(pdf_file_path: str, csv_writer: csv.DictWriter,
                 continue
 
             try:
-                text = clean_text(text)
-                sentences = split_into_sentences(text)
-                
-                for i, sentence in enumerate(sentences):
-                    if len(sentence) >= min_length:
+                # 원본 문장 추출 및 저장
+                original_sentences = split_into_sentences(text)
+                for i, original_sentence in enumerate(original_sentences):
+                    if len(original_sentence) >= min_length:  # 최소 길이 조건 적용
                         try:
                             csv_writer.writerow({
                                 'doc_id': doc_id,
                                 'type': 'paper',
                                 'page_no': page_no,
                                 'sentence_no': i + 1,
-                                'content': sentence
+                                'original': original_sentence,
+                                'content': clean_text(original_sentence)  # 정제된 문장
                             })
                             sentences_count += 1
                         except UnicodeEncodeError:
@@ -320,8 +318,8 @@ def process_pdf_folder(folder_path: str, output_csv: str, min_length: int = 30) 
         with open(output_csv, 'w', newline='', encoding='utf-8-sig') as csvfile, \
              open(excluded_csv, 'w', newline='', encoding='utf-8-sig') as excluded_file:
             
-            # 메인 CSV 작성기 설정
-            fieldnames = ['doc_id', 'type', 'page_no', 'sentence_no', 'content']
+            # 메인 CSV 작성기 설정 - original 필드 추가
+            fieldnames = ['doc_id', 'type', 'page_no', 'sentence_no', 'original', 'content']
             csv_writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             csv_writer.writeheader()
             
