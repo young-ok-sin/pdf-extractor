@@ -1,4 +1,3 @@
-
 import fitz
 import re
 import os
