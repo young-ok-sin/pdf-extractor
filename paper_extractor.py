@@ -140,7 +140,7 @@ def safe_get_text(page: fitz.Page) -> str:
     MAX_RETRIES = 3
     for attempt in range(MAX_RETRIES):
         try:
-            return page.get_text()
+            return page.get_text(flags=2)
         except (RuntimeError, ValueError) as e:
             if "cmsOpenProfileFromMem failed" in str(e) or "invalid ICC colorspace" in str(e):
                 if attempt < MAX_RETRIES - 1:
