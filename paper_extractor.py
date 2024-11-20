@@ -4,13 +4,14 @@ import os
 import csv
 import logging
 import warnings
+import tqdm
 
 # fitz 워닝 필터 설정
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 # 로깅 설정
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.CRITICAL,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler()
@@ -45,6 +46,9 @@ def remove_unnecessary_elements(text: str) -> str:
     cleaned_text = re.sub(allowed_pattern, '', text)
     
     cleanup_patterns = [
+        (r'([a-zA-Z])-\s*([a-zA-Z])', r'\1\2'),     # 하이픈으로 분리된 단어 결합
+        (r'([a-zA-Z])\s+Ž\s+([a-zA-Z])', r'\1\2'),  # Ž로 분리된 단어 결합
+        
         # 1. 괄호 처리
         (r'\(\s*\)', ''),                           # 빈 괄호 제거
         (r'\(\s*,\s*\)', ''),                       # 쉼표만 있는 괄호 제거
@@ -58,12 +62,10 @@ def remove_unnecessary_elements(text: str) -> str:
         (r'\(\s*(.*?)\s*[,.]\s*\)', r'(\1)'),         # 괄호 안 끝 부분의 쉼표/마침표 제거
         (r'\(\s*(.*?)\s+[,.]\)', r'(\1)'),             # 괄호 안 끝 부분의 공백+쉼표/마침표 제거
         
-        # 2. 수식 변수 제거
+        # 2. 연속 변수 제거
         (r'\b[a-zA-Z](?:[\s,.]+[a-zA-Z])+\b', ''), # 연속된 변수 제거
         
-        # 3. 특수문자 처리
-        # (r'\b\d+(?:\s*[,.-]\s*\d+)*\b', ''),       # 숫자 패턴 제거
-        (r'([a-z])-\s+([a-z])', r'\1\2'),          # 하이픈으로 연결된 문자 처리
+        # 3. 숫자와 특수문자 처리
         (r'-(?:\s*-)+', '-'),                       # 연속된 하이픈 처리
         (r'(\w)\s+\1(?:\s+\1){2,}', ''),           # 반복되는 문자 제거
         
@@ -83,7 +85,7 @@ def remove_unnecessary_elements(text: str) -> str:
         (r'\s+,', ','),                             # 쉼표 앞 공백 제거
         (r'\s*([,.])\s*(?=[,.!?])', r'\1'),        # 구두점 사이 공백
         (r',\s+', ', '),                            # 쉼표 뒤 공백 표준화
-        (r'\s+', ' ')                               # 남은 연속 공백 정리
+        (r'\s+', ' '),                               # 남은 연속 공백 정리
     ]
 
     prev_text = None
@@ -98,30 +100,61 @@ def clean_text(text: str) -> str:
     try:
         text = re.sub(r'[\t\r\f\v]+', ' ', text)
         text = re.sub(r'\s+', ' ', text)
+        
+        text = re.sub(r'(\w+)\s+\.\s+(\w+)', r'\1 \2', text)
+        
         text = remove_unnecessary_elements(text)
         
         return text.strip()
     except Exception as e:
-        logging.warning(f"텍스트 정제 중 오류 발생: {str(e)}")
+        logging.critical(f"텍스트 정제 중 오류 발생: {str(e)}")
         return ""
 
 def split_into_sentences(text: str) -> list:
-    """마침표와 줄바꿈을 기준으로 문장 분리하고 콜론 제거"""
-    try:
-        # 문장 분리
-        sentences = re.split(r'(?<=\.)\s|\n|(?<=;)\s|(?<=:)\s', text)
-        
-        # 각 문장에서 콜론 제거 후 정리
-        cleaned_sentences = []
-        for sentence in sentences:
-            if sentence and sentence.strip():
-                # 콜론 제거
-                cleaned = re.sub(r'[;:]', '', sentence.strip())
-                cleaned_sentences.append(cleaned)
-        return cleaned_sentences
-    except Exception as e:
-        logging.warning(f"문장 분리 중 오류 발생: {str(e)}")
+    """
+    텍스트를 문장 단위로 분리하는 함수
+    
+    Args:
+        text (str): 분리할 텍스트
+    
+    Returns:
+        list: 분리된 문장 리스트
+    """
+    if not text:
         return []
+        
+    # 약어 및 특수 패턴 정의
+    abbreviations = {
+        r'(?<=et al)\.',              # "et al." 패턴
+        r'(?<=i\.e)\.',               # "i.e." 패턴
+        r'(?<=e\.g)\.',               # "e.g." 패턴
+        r'(?<=Fig)\.',                # "Fig." 패턴
+        r'(?<=Eq)\.',                 # "Eq." 패턴
+        r'(?<=Dr)\.',                 # "Dr." 패턴
+        r'(?<=Prof)\.',               # "Prof." 패턴
+    }
+    
+    # 약어 패턴을 임시 마커로 치환
+    for i, pattern in enumerate(abbreviations):
+        text = re.sub(pattern, f'_DOT_{i}_', text)
+    
+    # 문장 분리를 위한 패턴
+    # 1. 마침표 + 공백 + 대문자로 시작하는 단어
+    # 2. 마침표 + 줄바꿈
+    # 3. 세미콜론이나 콜론 + 공백
+    sentence_patterns = r'(?<=[.!?])\s+(?=[A-Z])|(?<=[.!?])\n+|(?<=[;:])\s+'
+    
+    # 문장 분리 실행
+    sentences = re.split(sentence_patterns, text)
+    
+    # 임시 마커를 다시 마침표로 복원
+    sentences = [
+        re.sub(r'_DOT_\d_', '.', sentence.strip())
+        for sentence in sentences
+    ]
+    
+    # 빈 문장 제거 및 공백 정리
+    return [s.strip() for s in sentences if s.strip()]
 
 def write_excluded_doc(writer: csv.DictWriter, doc_id: str, reason: str, error: str = "None"):
     """제외된 문서 정보를 CSV에 기록하는 함수"""
@@ -136,22 +169,13 @@ def write_excluded_doc(writer: csv.DictWriter, doc_id: str, reason: str, error: 
 
 def safe_get_text(page: fitz.Page) -> str:
     """안전하게 페이지 텍스트를 추출하는 함수"""
-    MAX_RETRIES = 3
-    for attempt in range(MAX_RETRIES):
-        try:
-            return page.get_text(flags=2)
-        except (RuntimeError, ValueError) as e:
-            if "cmsOpenProfileFromMem failed" in str(e) or "invalid ICC colorspace" in str(e):
-                if attempt < MAX_RETRIES - 1:
-                    continue
-            logging.warning(f"텍스트 추출 중 오류 발생 (시도 {attempt + 1}/{MAX_RETRIES}): {str(e)}")
-            return ""
-        except Exception as e:
-            logging.warning(f"알 수 없는 텍스트 추출 오류: {str(e)}")
-            return ""
-    return ""
+    try:
+        text = page.get_text(flags=2)
+        return preprocess_text(text)
+    except Exception as e:
+        logging.critical(f"텍스트 추출 중 오류 발생: {str(e)}")
+        return ""
 
-# book 코드와 다른 메서드
 def check_document_validity(text: str) -> tuple[bool, str]:
     """문서 전체의 유효성을 검사하는 함수
     
@@ -222,20 +246,18 @@ def process_pdf(pdf_file_path: str, csv_writer: csv.DictWriter,
         except Exception as e:
             raise PDFProcessingError(f"PDF 열기 실패: {str(e)}")
         
-        logging.info(f"Processing {doc_id}: 총 페이지 수 = {len(doc)}")
-        
-        # 전체 문서 텍스트 추출
+        # 전체 문서 텍스트 추출 및 정제 (유효성 검사용)
         full_text = ""
         for page in doc:
             text = safe_get_text(page)
             if text:
-                full_text += clean_text(text) + "\n"
+                full_text += clean_text(text) + " "
         
         # 문서 유효성 검사
         is_valid, reason = check_document_validity(full_text)
         if not is_valid:
             write_excluded_doc(excluded_writer, doc_id, reason)
-            logging.info(f"Skipping {doc_id}: {reason}")
+            logging.critical(f"제외된 문서: {doc_id} - {reason}")
             return False
             
         # 문서가 유효한 경우 문장 추출 및 저장
@@ -246,51 +268,53 @@ def process_pdf(pdf_file_path: str, csv_writer: csv.DictWriter,
                 continue
 
             try:
-                # 원본 문장 추출 및 저장
                 original_sentences = split_into_sentences(text)
+                
                 for i, original_sentence in enumerate(original_sentences):
                     if len(original_sentence) >= min_length:  # 최소 길이 조건 적용
                         try:
-                            csv_writer.writerow({
-                                'doc_id': doc_id,
-                                'type': 'paper',
-                                'page_no': page_no,
-                                'sentence_no': i + 1,
-                                'original': original_sentence,
-                                'content': clean_text(original_sentence)  # 정제된 문장
-                            })
-                            sentences_count += 1
+                            # 정제된 버전은 content 필드에만 적용
+                            cleaned_sentence = clean_text(original_sentence)
+                            
+                            if cleaned_sentence:
+                                csv_writer.writerow({
+                                    'doc_id': doc_id,
+                                    'type': 'paper', #'book',
+                                    'page_no': page_no,
+                                    'sentence_no': i + 1,
+                                    'original': original_sentence,
+                                    'content': cleaned_sentence
+                                })
+                                sentences_count += 1
                         except UnicodeEncodeError:
-                            logging.warning(f"인코딩 오류 발생 - doc_id: {doc_id}, page: {page_no}")
+                            logging.critical(f"인코딩 오류 발생 - doc_id: {doc_id}, page: {page_no}")
                             continue
             except Exception as e:
-                logging.warning(f"페이지 {page_no} 처리 중 오류: {str(e)}")
+                logging.critical(f"문장 처리 오류 - {doc_id}, 페이지 {page_no}: {str(e)}")
                 continue
 
         if sentences_count == 0:
             reason = '추출된 문장이 없음'
             write_excluded_doc(excluded_writer, doc_id, reason)
-            logging.info(f"Skipping {doc_id}: {reason}")
+            logging.critical(f"제외된 문서: {doc_id} - {reason}")
             return False
-
-        logging.info(f"Completed {doc_id} - {sentences_count} sentences extracted")
         return True
     except PDFProcessingError as e:
         write_excluded_doc(excluded_writer, doc_id, str(e))
-        logging.error(f"PDF 처리 오류 - {doc_id}: {str(e)}")
+        logging.critical(f"PDF 처리 오류 - {doc_id}: {str(e)}")
         return False
     except Exception as e:
         write_excluded_doc(excluded_writer, doc_id, '처리 중 예상치 못한 오류 발생', str(e))
-        logging.error(f"예상치 못한 오류 - {doc_id}: {str(e)}")
+        logging.critical(f"예상치 못한 오류 - {doc_id}: {str(e)}")
         return False
     finally:
         if doc:
             try:
                 doc.close()
             except Exception as e:
-                logging.warning(f"PDF 파일 닫기 실패 - {doc_id}: {str(e)}")
+                logging.critical(f"PDF 파일 닫기 실패 - {doc_id}: {str(e)}")
 
-def process_pdf_folder(folder_path: str, output_csv: str, min_length: int = 30) -> None:
+def process_pdf_folder(folder_path: str, output_csv: str, min_length: int = 35) -> None:
     """폴더 내 PDF 파일을 일괄 처리하여 문장을 CSV에 기록"""
     if not os.path.exists(folder_path):
         raise FileNotFoundError(f"폴더를 찾을 수 없습니다: {folder_path}")
@@ -305,10 +329,10 @@ def process_pdf_folder(folder_path: str, output_csv: str, min_length: int = 30) 
     
     pdf_files = [f for f in os.listdir(folder_path) if f.lower().endswith('.pdf')]
     if not pdf_files:
-        logging.warning(f"경고: {folder_path}에서 PDF 파일을 찾을 수 없습니다.")
+        logging.critical(f"경고: {folder_path}에서 PDF 파일을 찾을 수 없습니다.")
         return
     
-    logging.info(f"총 {len(pdf_files)}개의 PDF 파일을 처리합니다.")
+    logging.critical(f"PDF 파일 처리 시작 (총 {len(pdf_files)}개)")
     
     processed_docs = 0
     excluded_docs = 0
@@ -317,7 +341,7 @@ def process_pdf_folder(folder_path: str, output_csv: str, min_length: int = 30) 
         with open(output_csv, 'w', newline='', encoding='utf-8-sig') as csvfile, \
              open(excluded_csv, 'w', newline='', encoding='utf-8-sig') as excluded_file:
             
-            # 메인 CSV 작성기 설정 - original 필드 추가
+            # 메인 CSV 작성기 설정
             fieldnames = ['doc_id', 'type', 'page_no', 'sentence_no', 'original', 'content']
             csv_writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             csv_writer.writeheader()
@@ -327,29 +351,69 @@ def process_pdf_folder(folder_path: str, output_csv: str, min_length: int = 30) 
             excluded_writer = csv.DictWriter(excluded_file, fieldnames=excluded_fieldnames)
             excluded_writer.writeheader()
             
-            # 각 PDF 파일 처리
-            for filename in pdf_files:
-                pdf_file_path = os.path.join(folder_path, filename)
-                try:
-                    if process_pdf(pdf_file_path, csv_writer, excluded_writer, min_length):
-                        processed_docs += 1
-                    else:
+            with tqdm.tqdm(total=len(pdf_files), desc="전체 진행률", unit="%") as pbar:
+                for filename in pdf_files:
+                    pdf_file_path = os.path.join(folder_path, filename)
+                    try:
+                        if process_pdf(pdf_file_path, csv_writer, excluded_writer, min_length):
+                            processed_docs += 1
+                        else:
+                            excluded_docs += 1
+                    except Exception as e:
+                        logging.critical(f"파일 처리 실패 - {filename}: {str(e)}")
                         excluded_docs += 1
-                except Exception as e:
-                    logging.error(f"파일 처리 실패 - {filename}: {str(e)}")
-                    excluded_docs += 1
-                    continue
+                    finally:
+                        pbar.update(1)
+            
+            # 최종 처리 결과 출력
+            logging.critical(f"\n처리 완료: 성공 {processed_docs}개, 제외 {excluded_docs}개")
     
     except Exception as e:
-        logging.error(f"CSV 파일 처리 중 오류 발생: {str(e)}")
+        logging.critical(f"CSV 파일 처리 중 오류 발생: {str(e)}")
         raise
+
+def preprocess_text(text: str) -> str:
+    """
+    줄바꿈과 특수 패턴으로 분리된 단어들을 전처리하는 함수
     
-    logging.info(f"\n처리 완료 통계:")
-    logging.info(f"- 성공적으로 처리된 문서: {processed_docs}개")
-    logging.info(f"- 제외된 문서: {excluded_docs}개")
-    logging.info(f"- 총 처리 시도된 문서: {len(pdf_files)}개")
-    logging.info(f"\n처리된 문장이 '{output_csv}'에 저장되었습니다.")
-    logging.info(f"제외된 문서 정보가 '{excluded_csv}'에 저장되었습니다.")
+    Args:
+        text (str): 전처리할 원본 텍스트
+    
+    Returns:
+        str: 전처리된 텍스트
+    """
+    if not text:
+        return text
+        
+    # 특수 패턴을 처리하기 전에 줄바꿈을 임시 마커로 변경
+    text = text.replace('\n', ' LINEBREAK ')
+    
+    # 단어 연결 패턴 정의
+    word_patterns = [
+        # 하이픈으로 분리된 단어
+        (r'(\w+)-\s*LINEBREAK\s*(\w+)', r'\1\2'),
+        # Ž 패턴으로 분리된 단어 (마침표 포함/미포함)
+        (r'(\w+)\s*Ž\s*\.?\s*(\w+)', r'\1\2'),
+        # 마침표로 분리된 단어
+        (r'(\w+)\s*\.\s*\.\s*(\w+)', r'\1\2'),
+        # 마침표와 공백으로 잘못 분리된 단어 (Born . term 같은 경우)
+        (r'(\w+)\s+\.\s+(\w+)', r'\1 \2'),
+        # 마침표와 공백으로 잘못 분리된 단어 (소문자로 시작하는 경우)
+        (r'(\w+)\s*\.\s+([a-z]\w*)', r'\1 \2'),
+    ]
+    
+    # 모든 패턴 적용
+    for pattern, replacement in word_patterns:
+        text = re.sub(pattern, replacement, text)
+    
+    # 줄바꿈 마커를 다시 공백으로 변환
+    text = text.replace('LINEBREAK', ' ')
+    
+    # 문장 정리
+    text = re.sub(r'\s+', ' ', text)  # 연속된 공백을 하나로
+    text = re.sub(r'\s*([,.])\s*', r'\1 ', text)  # 구두점 주변 공백 정리
+    
+    return text.strip()
 
 if __name__ == "__main__":
     # 아래 path 경로 설정 필요 
