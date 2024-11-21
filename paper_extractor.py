@@ -125,13 +125,13 @@ def split_into_sentences(text: str) -> list:
         
     # 약어 및 특수 패턴 정의
     abbreviations = {
-        r'(?<=et al)\.',              # "et al." 패턴
-        r'(?<=i\.e)\.',               # "i.e." 패턴
-        r'(?<=e\.g)\.',               # "e.g." 패턴
-        r'(?<=Fig)\.',                # "Fig." 패턴
-        r'(?<=Eq)\.',                 # "Eq." 패턴
-        r'(?<=Dr)\.',                 # "Dr." 패턴
-        r'(?<=Prof)\.',               # "Prof." 패턴
+        r'(?<=et al)\.',             
+        r'(?<=i\.e)\.',               
+        r'(?<=e\.g)\.',               
+        r'(?<=Fig)\.',                
+        r'(?<=Eq)\.',                 
+        r'(?<=Dr)\.',               
+        r'(?<=Prof)\.',               
     }
     
     # 약어 패턴을 임시 마커로 치환
@@ -139,9 +139,6 @@ def split_into_sentences(text: str) -> list:
         text = re.sub(pattern, f'_DOT_{i}_', text)
     
     # 문장 분리를 위한 패턴
-    # 1. 마침표 + 공백 + 대문자로 시작하는 단어
-    # 2. 마침표 + 줄바꿈
-    # 3. 세미콜론이나 콜론 + 공백
     sentence_patterns = r'(?<=[.!?])\s*(?=[A-Z0-9])|(?<=[.!?])\n+|(?<=[;:])\s+'
     
     # 문장 분리 실행
@@ -271,7 +268,7 @@ def process_pdf(pdf_file_path: str, csv_writer: csv.DictWriter,
                 original_sentences = split_into_sentences(text)
                 
                 for i, original_sentence in enumerate(original_sentences):
-                    if len(original_sentence) >= min_length:  # 최소 길이 조건 적용
+                    if len(original_sentence) >= min_length:
                         try:
                             # 정제된 버전은 content 필드에만 적용
                             cleaned_sentence = clean_text(original_sentence)
@@ -365,7 +362,6 @@ def process_pdf_folder(folder_path: str, output_csv: str, min_length: int = 35) 
                     finally:
                         pbar.update(1)
             
-            # 최종 처리 결과 출력
             logging.critical(f"\n처리 완료: 성공 {processed_docs}개, 제외 {excluded_docs}개")
     
     except Exception as e:
@@ -396,7 +392,7 @@ def preprocess_text(text: str) -> str:
         (r'(\w+)\s*Ž\s*\.?\s*(\w+)', r'\1\2'),
         # 마침표로 분리된 단어
         (r'(\w+)\s*\.\s*\.\s*(\w+)', r'\1\2'),
-        # 마침표와 공백으로 잘못 분리된 단어 (Born . term 같은 경우)
+        # 마침표와 공백으로 잘못 분리된 단어
         (r'(\w+)\s+\.\s+(\w+)', r'\1 \2'),
         # 마침표와 공백으로 잘못 분리된 단어 (소문자로 시작하는 경우)
         (r'(\w+)\s*\.\s+([a-z]\w*)', r'\1 \2'),
