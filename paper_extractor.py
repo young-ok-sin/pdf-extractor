@@ -142,7 +142,7 @@ def split_into_sentences(text: str) -> list:
     # 1. 마침표 + 공백 + 대문자로 시작하는 단어
     # 2. 마침표 + 줄바꿈
     # 3. 세미콜론이나 콜론 + 공백
-    sentence_patterns = r'(?<=[.!?])\s+(?=[A-Z])|(?<=[.!?])\n+|(?<=[;:])\s+'
+    sentence_patterns = r'(?<=[.!?])\s*(?=[A-Z0-9])|(?<=[.!?])\n+|(?<=[;:])\s+'
     
     # 문장 분리 실행
     sentences = re.split(sentence_patterns, text)
