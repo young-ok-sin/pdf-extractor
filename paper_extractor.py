@@ -127,7 +127,8 @@ def split_into_sentences(text: str) -> list:
         r'(?<=et al)\.',             
         r'(?<=i\.e)\.',               
         r'(?<=e\.g)\.',               
-        r'(?<=Fig)\.',                
+        r'(?<=Fig)\.',
+        r'(?<=Figure)\.',                 
         r'(?<=Eq)\.',                 
         r'(?<=Dr)\.',               
         r'(?<=Prof)\.',               
@@ -160,6 +161,28 @@ def write_excluded_doc(writer: csv.DictWriter, doc_id: str, reason: str, error: 
         })
     except Exception as e:
         logging.error(f"제외 문서 기록 중 오류 발생 - doc_id: {doc_id}, error: {str(e)}")
+
+def get_document_type(pdf_file_path: str) -> str:
+    """
+    PDF 파일의 상위 폴더 이름을 기반으로 문서 타입을 결정하는 함수
+    
+    Args:
+        pdf_file_path (str): PDF 파일의 전체 경로
+    
+    Returns:
+        str: 'book' 또는 'paper'
+    """
+    # 파일의 상위 폴더 이름 추출
+    parent_folder = os.path.basename(os.path.dirname(pdf_file_path)).lower()
+    
+    # 상위 폴더 이름에 따라 타입 결정
+    if 'book' in parent_folder:
+        return 'book'
+    elif 'paper' in parent_folder:
+        return 'paper'
+    else:
+        logging.warning(f"알 수 없는 문서 타입 폴더: {parent_folder}, 기본값 'unknown' 사용")
+        return 'unknown'
 
 def safe_get_text(page: fitz.Page) -> str:
     """안전하게 페이지 텍스트를 추출하는 함수"""
@@ -237,6 +260,7 @@ def process_pdf(pdf_file_path: str, csv_writer: csv.DictWriter,
         min_cleaned_length (int): 정제된 문장의 최소 길이
     """
     doc_id = os.path.splitext(os.path.basename(pdf_file_path))[0]
+    doc_type = get_document_type(pdf_file_path)
     doc = None
     
     try:
@@ -284,7 +308,7 @@ def process_pdf(pdf_file_path: str, csv_writer: csv.DictWriter,
                             
                         csv_writer.writerow({
                             'doc_id': doc_id,
-                            'type': 'book',
+                            'type': doc_type, # paper
                             'page_no': page_no,
                             'sentence_no': i + 1,
                             'original': original_sentence,
