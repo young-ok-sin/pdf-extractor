@@ -25,7 +25,6 @@ class PDFProcessingError(Exception):
     """PDF 처리 중 발생하는 커스텀 예외"""
     pass
 
-# book 코드와 다른 메서드
 def remove_unnecessary_elements(text: str) -> str:
     """
     알파벳(대/소문자)과 기본 문장 부호((),.'";:-)만 남기고 나머지 문자를 제거하는 함수
@@ -137,8 +136,6 @@ def split_into_sentences(text: str) -> list:
     # 약어 패턴을 임시 마커로 치환
     for i, pattern in enumerate(abbreviations):
         text = re.sub(pattern, f'_DOT_{i}_', text)
-    
-    # 문장 분리를 위한 패턴
     sentence_patterns = r'(?<=[.!?])\s*(?=[A-Z0-9])|(?<=[.!?])\n+|(?<=[;:])\s+'
     
     # 문장 분리 실행
@@ -229,8 +226,16 @@ def check_document_validity(text: str) -> tuple[bool, str]:
 
 
 def process_pdf(pdf_file_path: str, csv_writer: csv.DictWriter, 
-                excluded_writer: csv.DictWriter, min_length: int = 30) -> bool:
-    """PDF 파일에서 문장을 추출하여 CSV로 기록"""
+                excluded_writer: csv.DictWriter, min_raw_length: int = 30, min_cleaned_length: int = 20) -> bool:
+    """PDF 파일에서 문장을 추출하여 CSV로 기록
+    
+    Args:
+        pdf_file_path (str): PDF 파일 경로
+        csv_writer (csv.DictWriter): CSV 작성기
+        excluded_writer (csv.DictWriter): 제외된 문서 기록용 CSV 작성기
+        min_raw_length (int): 원본 문장의 최소 길이
+        min_cleaned_length (int): 정제된 문장의 최소 길이
+    """
     doc_id = os.path.splitext(os.path.basename(pdf_file_path))[0]
     doc = None
     
@@ -268,24 +273,27 @@ def process_pdf(pdf_file_path: str, csv_writer: csv.DictWriter,
                 original_sentences = split_into_sentences(text)
                 
                 for i, original_sentence in enumerate(original_sentences):
-                    if len(original_sentence) >= min_length:
-                        try:
-                            # 정제된 버전은 content 필드에만 적용
-                            cleaned_sentence = clean_text(original_sentence)
-                            
-                            if cleaned_sentence:
-                                csv_writer.writerow({
-                                    'doc_id': doc_id,
-                                    'type': 'paper', #'book',
-                                    'page_no': page_no,
-                                    'sentence_no': i + 1,
-                                    'original': original_sentence,
-                                    'content': cleaned_sentence
-                                })
-                                sentences_count += 1
-                        except UnicodeEncodeError:
-                            logging.critical(f"인코딩 오류 발생 - doc_id: {doc_id}, page: {page_no}")
+                    if len(original_sentence) < min_raw_length:
+                        continue
+                        
+                    try:
+                        # 정제된 문장 생성 및 길이 체크
+                        cleaned_sentence = clean_text(original_sentence)
+                        if not cleaned_sentence or len(cleaned_sentence) < min_cleaned_length:
                             continue
+                            
+                        csv_writer.writerow({
+                            'doc_id': doc_id,
+                            'type': 'book',
+                            'page_no': page_no,
+                            'sentence_no': i + 1,
+                            'original': original_sentence,
+                            'content': cleaned_sentence
+                        })
+                        sentences_count += 1
+                    except UnicodeEncodeError:
+                        logging.critical(f"인코딩 오류 발생 - doc_id: {doc_id}, page: {page_no}")
+                        continue
             except Exception as e:
                 logging.critical(f"문장 처리 오류 - {doc_id}, 페이지 {page_no}: {str(e)}")
                 continue
@@ -311,8 +319,16 @@ def process_pdf(pdf_file_path: str, csv_writer: csv.DictWriter,
             except Exception as e:
                 logging.critical(f"PDF 파일 닫기 실패 - {doc_id}: {str(e)}")
 
-def process_pdf_folder(folder_path: str, output_csv: str, min_length: int = 35) -> None:
-    """폴더 내 PDF 파일을 일괄 처리하여 문장을 CSV에 기록"""
+
+def process_pdf_folder(folder_path: str, output_csv: str, min_raw_length: int = 35, min_cleaned_length: int = 20) -> None:
+    """폴더 내 PDF 파일을 일괄 처리하여 문장을 CSV에 기록
+    
+    Args:
+        folder_path (str): PDF 파일이 있는 폴더 경로
+        output_csv (str): 결과를 저장할 CSV 파일 경로
+        min_raw_length (int): 원본 문장의 최소 길이
+        min_cleaned_length (int): 정제된 문장의 최소 길이
+    """
     if not os.path.exists(folder_path):
         raise FileNotFoundError(f"폴더를 찾을 수 없습니다: {folder_path}")
     
@@ -328,8 +344,6 @@ def process_pdf_folder(folder_path: str, output_csv: str, min_length: int = 35) 
     if not pdf_files:
         logging.critical(f"경고: {folder_path}에서 PDF 파일을 찾을 수 없습니다.")
         return
-    
-    logging.critical(f"PDF 파일 처리 시작 (총 {len(pdf_files)}개)")
     
     processed_docs = 0
     excluded_docs = 0
@@ -352,7 +366,7 @@ def process_pdf_folder(folder_path: str, output_csv: str, min_length: int = 35) 
                 for filename in pdf_files:
                     pdf_file_path = os.path.join(folder_path, filename)
                     try:
-                        if process_pdf(pdf_file_path, csv_writer, excluded_writer, min_length):
+                        if process_pdf(pdf_file_path, csv_writer, excluded_writer, min_raw_length, min_cleaned_length):
                             processed_docs += 1
                         else:
                             excluded_docs += 1
@@ -362,11 +376,13 @@ def process_pdf_folder(folder_path: str, output_csv: str, min_length: int = 35) 
                     finally:
                         pbar.update(1)
             
+            # 최종 처리 결과 출력
             logging.critical(f"\n처리 완료: 성공 {processed_docs}개, 제외 {excluded_docs}개")
     
     except Exception as e:
         logging.critical(f"CSV 파일 처리 중 오류 발생: {str(e)}")
         raise
+
 
 def preprocess_text(text: str) -> str:
     """
@@ -413,11 +429,12 @@ def preprocess_text(text: str) -> str:
 
 if __name__ == "__main__":
     # 아래 path 경로 설정 필요 
-    folder_path = "./data/paper"
-    output_csv = './book/test/final_paper_Result.csv'
-    min_sentence_length = 35
+    folder_path = "./data/book"
+    output_csv = './paper_test/book_min_result.csv'
+    min_raw_length = 35    # 원본 문장 최소 길이
+    min_cleaned_length = 20  # 정제된 문장 최소 길이
     
     try:
-        process_pdf_folder(folder_path, output_csv, min_sentence_length)
+        process_pdf_folder(folder_path, output_csv, min_raw_length, min_cleaned_length)
     except Exception as e:
-        logging.error(f"프로그램 실행 중 오류가 발생했습니다: {str(e)}")
+        logging.critical(f"프로그램 실행 중 오류가 발생했습니다: {str(e)}")
